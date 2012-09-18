@@ -2483,6 +2483,22 @@ typedef struct {
   int heap_index;
 } cell_ewma_t;
 
+/**
+ * This structure keeps track of "gaps" between cells of the same stream
+ * to generate a usable distribution as well as to know when to insert dummy
+ * traffic. 
+ */
+typedef struct {
+  /**
+   * The stream for which we track the intervals
+   */
+  streamid_t stream_id;
+  /**
+   * High-precision timer to note the last time we prepared a cell
+   */
+  struct timespec *time_of_last_cell;
+} ici_distribution_t;
+
 #define ORIGIN_CIRCUIT_MAGIC 0x35315243u
 #define OR_CIRCUIT_MAGIC 0x98ABC04Fu
 
@@ -2590,6 +2606,9 @@ typedef struct circuit_t {
    * n_conn_cells queue.  Used to determine which circuit to flush from next.
    */
   cell_ewma_t n_cell_ewma;
+  
+  /** List of lengths of gaps between cells associated with a stream ID */
+  smartlist_t *ici_distributions;
 } circuit_t;
 
 /** Largest number of relay_early cells that we can send on a given
