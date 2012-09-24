@@ -570,48 +570,33 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
    * to determine the length of gaps in the stream */ 
   if (relay_command == RELAY_COMMAND_DATA) {
     char log_message[100], temp[32];
-    ici_distribution_t *distrib = NULL;
-    sprintf(log_message, "cell from %s (sid=%d", cell_direction == CELL_DIRECTION_OUT ? "entry" : "exit", stream_id);
+    sprintf(log_message, "cell from %s", cell_direction == CELL_DIRECTION_OUT ? "entry" : "exit");
     
-    /* If we haven't sent a single DATA cell through this circuit prepare the list */
-    if (!circ->ici_distributions) {
-      circ->ici_distributions = smartlist_new();   
-    }
-
-    /* Try to find the list entry for this circuit and stream ID */
-    SMARTLIST_FOREACH_BEGIN(circ->ici_distributions, ici_distribution_t *, cd) {
-      if (cd->stream_id == stream_id) {
-        distrib = cd;
-      }
-    } SMARTLIST_FOREACH_END(cd);
-    
-    /* If it isn't in the list yet ...*/
-    if (!distrib) {
-      /* ... add it */
-      distrib = tor_malloc_zero(sizeof(ici_distribution_t));
-      distrib->stream_id = stream_id;
-      distrib->time_of_last_cell = tor_malloc_zero(sizeof(struct timespec));
-      clock_gettime(CLOCK_REALTIME, distrib->time_of_last_cell);
-      smartlist_add(circ->ici_distributions, distrib);
+    if (!circ->time_of_last_cell) {
+      circ->time_of_last_cell = tor_malloc_zero(sizeof(struct timespec));
+      clock_gettime(CLOCK_REALTIME, circ->time_of_last_cell);
     } else {
-      /* ... else calculate new gap length */
       struct timespec current_time, gap_length;
       clock_gettime(CLOCK_REALTIME, &current_time);
       
-      gap_length.tv_sec = current_time.tv_sec - distrib->time_of_last_cell->tv_sec;
-      gap_length.tv_nsec = current_time.tv_nsec - distrib->time_of_last_cell->tv_nsec;
+      if (current_time.tv_sec < circ->time_of_last_cell->tv_sec) {
+        gap_length.tv_sec = 0;     
+        gap_length.tv_nsec = 0;
+      } else {
+        gap_length.tv_sec = current_time.tv_sec -  circ->time_of_last_cell->tv_sec;
+        gap_length.tv_nsec = current_time.tv_nsec -  circ->time_of_last_cell->tv_nsec;
+      }
 
       while(gap_length.tv_nsec < 0) {
         gap_length.tv_sec--;
         gap_length.tv_nsec += 1000000000;
       }
-      
-      sprintf(temp, ";gap=%lu.%.3d", gap_length.tv_sec, (int)(gap_length.tv_nsec / 1000000));
+
+      sprintf(temp, " %lu.%.3d", gap_length.tv_sec, (int)(gap_length.tv_nsec / 1000000));
       strcat(log_message, temp);
-      distrib->time_of_last_cell = &current_time;
+      circ->time_of_last_cell = &current_time;
     }
-    
-    strcat(log_message, ")");    
+      
     log(LOG_NOTICE, LD_GENERAL, log_message);
   }
 
