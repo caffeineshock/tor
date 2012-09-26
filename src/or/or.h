@@ -2593,6 +2593,9 @@ typedef struct circuit_t {
   
   /** High-precission timer to determine lengths of gaps in the stream */
   struct timespec *time_of_last_cell;
+  
+  /** Linked list to keep track of streams that carry directory requests */
+  smartlist_t *dir_streams;
 } circuit_t;
 
 /** Largest number of relay_early cells that we can send on a given

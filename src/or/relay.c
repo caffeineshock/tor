@@ -11,6 +11,7 @@
  **/
 
 #include <math.h>
+#include <stdbool.h>
 #define RELAY_PRIVATE
 #include "or.h"
 #include "buffers.h"
@@ -566,38 +567,60 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
     circ->n_conn->client_used = approx_time();
   }
   
-  /* If we're sending a data cell through a circuit, we want to note the time
-   * to determine the length of gaps in the stream */ 
-  if (relay_command == RELAY_COMMAND_DATA) {
-    char log_message[100], temp[32];
-    sprintf(log_message, "cell from %s", cell_direction == CELL_DIRECTION_OUT ? "entry" : "exit");
-    
-    if (!circ->time_of_last_cell) {
-      circ->time_of_last_cell = tor_malloc_zero(sizeof(struct timespec));
-      clock_gettime(CLOCK_REALTIME, circ->time_of_last_cell);
-    } else {
-      struct timespec current_time, gap_length;
-      clock_gettime(CLOCK_REALTIME, &current_time);
-      
-      if (current_time.tv_sec < circ->time_of_last_cell->tv_sec) {
-        gap_length.tv_sec = 0;     
-        gap_length.tv_nsec = 0;
-      } else {
-        gap_length.tv_sec = current_time.tv_sec -  circ->time_of_last_cell->tv_sec;
-        gap_length.tv_nsec = current_time.tv_nsec -  circ->time_of_last_cell->tv_nsec;
-      }
-
-      while(gap_length.tv_nsec < 0) {
-        gap_length.tv_sec--;
-        gap_length.tv_nsec += 1000000000;
-      }
-
-      sprintf(temp, " %lu.%.3d", gap_length.tv_sec, (int)(gap_length.tv_nsec / 1000000));
-      strcat(log_message, temp);
-      circ->time_of_last_cell = &current_time;
+  bool dir_stream = false;
+  
+  if (relay_command == RELAY_COMMAND_DATA || relay_command == RELAY_COMMAND_BEGIN_DIR) {
+    if (!circ->dir_streams) {
+      circ->dir_streams = smartlist_new();  
     }
+    
+    /* Try to find the list entry for this circuit and stream ID */
+    SMARTLIST_FOREACH_BEGIN(circ->dir_streams, streamid_t *, sid) {
+      if (*sid == stream_id) {
+        dir_stream = true;
+      }
+    } SMARTLIST_FOREACH_END(sid);
+  }
+  
+  if (!dir_stream) {
+    /* If we're sending a data cell through a circuit, we want to note the time
+     * to determine the length of gaps in the stream */ 
+    if (relay_command == RELAY_COMMAND_DATA) {
+      char log_message[100], temp[32];
+      sprintf(log_message, "cell from %s", cell_direction == CELL_DIRECTION_OUT ? "entry" : "exit");
+    
+      if (!circ->time_of_last_cell) {
+        circ->time_of_last_cell = tor_malloc_zero(sizeof(struct timespec));
+        clock_gettime(CLOCK_REALTIME, circ->time_of_last_cell);
+      } else {
+        struct timespec current_time, gap_length;
+        clock_gettime(CLOCK_REALTIME, &current_time);
       
-    log(LOG_NOTICE, LD_GENERAL, log_message);
+        if (current_time.tv_sec < circ->time_of_last_cell->tv_sec) {
+          gap_length.tv_sec = 0;     
+          gap_length.tv_nsec = 0;
+        } else {
+          gap_length.tv_sec = current_time.tv_sec -  circ->time_of_last_cell->tv_sec;
+          gap_length.tv_nsec = current_time.tv_nsec -  circ->time_of_last_cell->tv_nsec;
+        }
+
+        while(gap_length.tv_nsec < 0) {
+          gap_length.tv_sec--;
+          gap_length.tv_nsec += 1000000000;
+        }
+
+        sprintf(temp, " %lu.%.3d", gap_length.tv_sec, (int)(gap_length.tv_nsec / 1000000));
+        strcat(log_message, temp);
+        circ->time_of_last_cell = &current_time;
+      }
+      
+      log(LOG_NOTICE, LD_GENERAL, log_message);
+    } else if (relay_command == RELAY_COMMAND_BEGIN_DIR ) { 
+      smartlist_add(circ->dir_streams, &stream_id);
+      log(LOG_NOTICE, LD_GENERAL, "Stream now ignored (%d)", stream_id);
+    }
+  } else {
+    log(LOG_NOTICE, LD_GENERAL, "Ignored Cell");
   }
 
   if (cell_direction == CELL_DIRECTION_OUT) {
