@@ -617,10 +617,10 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
       log(LOG_NOTICE, LD_GENERAL, log_message);
     } else if (relay_command == RELAY_COMMAND_BEGIN_DIR ) { 
       smartlist_add(circ->dir_streams, &stream_id);
-      log(LOG_NOTICE, LD_GENERAL, "Stream now ignored (%d)", stream_id);
+      log(LOG_NOTICE, LD_GENERAL, "Stream #%d now ignored", stream_id);
     }
   } else {
-    log(LOG_NOTICE, LD_GENERAL, "Ignored Cell");
+    log(LOG_NOTICE, LD_GENERAL, "Ignored cell from stream #%d", stream_id);
   }
 
   if (cell_direction == CELL_DIRECTION_OUT) {
