@@ -174,6 +174,8 @@ typedef struct config_var_t {
  */
 static config_var_t _option_vars[] = {
   OBSOLETE("AccountingMaxKB"),
+  V(AdaptivePadding,             BOOL,     "1"),
+  V(AdaptivePaddingDistrib,      BOOL,     "0"),
   V(AccountingMax,               MEMUNIT,  "0 bytes"),
   V(AccountingStart,             STRING,   NULL),
   V(Address,                     STRING,   NULL),

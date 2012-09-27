@@ -3382,6 +3382,10 @@ typedef struct {
                        * forward the DirPort and ORPort on the NAT device */
   char *PortForwardingHelper; /** < Filename or full path of the port
                                   forwarding helper executable */
+  
+  int AdaptivePadding;
+  int AdaptivePaddingDistrib;
+  
   int AllowNonRFC953Hostnames; /**< If true, we allow connections to hostnames
                                 * with weird characters. */
   /** If true, we try resolving hostnames with weird characters. */
