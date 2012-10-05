@@ -12,6 +12,7 @@
 
 #include <math.h>
 #include <stdbool.h>
+#include <string.h>
 #define RELAY_PRIVATE
 #include "or.h"
 #include "buffers.h"
@@ -34,6 +35,59 @@
 #include "router.h"
 #include "routerlist.h"
 #include "routerparse.h"
+#include "../common/crypto.h"
+#ifdef HAVE_EVENT2_DNS_H
+#include <event2/event.h>
+#include <event2/dns.h>
+#else
+#include <event.h>
+#include "eventdns.h"
+#ifndef HAVE_EVDNS_SET_DEFAULT_OUTGOING_BIND_ADDRESS
+#define HAVE_EVDNS_SET_DEFAULT_OUTGOING_BIND_ADDRESS
+#endif
+#endif
+
+#ifndef HAVE_EVENT2_DNS_H
+struct evdns_base;
+struct evdns_request;
+#define evdns_base_new(x,y) tor_malloc(1)
+#define evdns_base_clear_nameservers_and_suspend(base) \
+  evdns_clear_nameservers_and_suspend()
+#define evdns_base_search_clear(base) evdns_search_clear()
+#define evdns_base_set_default_outgoing_bind_address(base, a, len)  \
+  evdns_set_default_outgoing_bind_address((a),(len))
+#define evdns_base_resolv_conf_parse(base, options, fname) \
+  evdns_resolv_conf_parse((options), (fname))
+#define evdns_base_count_nameservers(base)      \
+  evdns_count_nameservers()
+#define evdns_base_resume(base)                 \
+  evdns_resume()
+#define evdns_base_config_windows_nameservers(base)     \
+  evdns_config_windows_nameservers()
+#define evdns_base_set_option_(base, opt, val) \
+  evdns_set_option((opt),(val),DNS_OPTIONS_ALL)
+/* Note: our internal eventdns.c, plus Libevent 1.4, used a 1 return to
+ * signify failure to launch a resolve. Libevent 2.0 uses a -1 return to
+ * signify a failure on a resolve, though if we're on Libevent 2.0, we should
+ * have event2/dns.h and never hit these macros.  Regardless, 0 is success. */
+#define evdns_base_resolve_ipv4(base, addr, options, cb, ptr) \
+  ((evdns_resolve_ipv4((addr), (options), (cb), (ptr))!=0)    \
+   ? NULL : ((void*)1))
+#define evdns_base_resolve_reverse(base, addr, options, cb, ptr)        \
+  ((evdns_resolve_reverse((addr), (options), (cb), (ptr))!=0)           \
+   ? NULL : ((void*)1))
+#define evdns_base_resolve_reverse_ipv6(base, addr, options, cb, ptr)   \
+  ((evdns_resolve_reverse_ipv6((addr), (options), (cb), (ptr))!=0)      \
+   ? NULL : ((void*)1))
+
+#elif defined(LIBEVENT_VERSION_NUMBER) && LIBEVENT_VERSION_NUMBER < 0x02000303
+#define evdns_base_set_option_(base, opt, val) \
+  evdns_base_set_option((base), (opt),(val),DNS_OPTIONS_ALL)
+
+#else
+#define evdns_base_set_option_ evdns_base_set_option
+
+#endif
 
 static edge_connection_t *relay_lookup_conn(circuit_t *circ, cell_t *cell,
                                             cell_direction_t cell_direction,
@@ -511,6 +565,152 @@ relay_command_to_string(uint8_t command)
   }
 }
 
+static void
+add_lengths_for_interval(smartlist_t *templ, int itv, int amount)
+{
+  int j, *bin_val;
+  
+  for (j = 0; j < amount; j++) {
+    bin_val = tor_malloc(sizeof(streamid_t));
+
+    if (itv == 0) {
+      *bin_val = crypto_rand_int(1);
+    } else {
+      *bin_val = pow(2, itv) + crypto_rand_int(pow(2, itv + 1));
+    }
+
+    smartlist_add(templ, bin_val); 
+  }
+}
+
+void
+init_ici_distribution(void)
+{
+  uint8_t entry_distrib[] = {
+    62,     /* 0...1 */
+    3,      /* 1...2 */
+    4,      /* 2...4 */
+    5,      /* 4...8 */
+    1,      /* 8...16 */
+    5,      /* 16...32 */
+    6,      /* 32...64 */
+    32,     /* 64...128 */
+    18,     /* 128...256 */
+    8,      /* 256...512 */
+    4,      /* 512...1024 */
+    7,      /* 1024...2048 */
+    0,      /* 2048...4096 */
+    0,      /* 4096...8192 */
+    1,      /* 8192...16384 */
+    0,      /* 16384...32768 */
+    11,     /* 32768...Infinity */
+  };
+
+  uint8_t exit_distrib[] = {
+    2726,   /* 0...1 */
+    9,      /* 1...2 */
+    22,     /* 2...4 */
+    14,     /* 4...8 */
+    18,     /* 8...16 */
+    25,     /* 16...32 */
+    15,     /* 32...64 */
+    17,     /* 64...128 */
+    9,      /* 128...256 */
+    14,     /* 256...512 */
+    4,      /* 512...1024 */
+    4,      /* 1024...2048 */
+    6,      /* 2048...4096 */
+    0,      /* 4096...8192 */
+    0,      /* 8192...16384 */
+    0,      /* 16384...32768 */
+    1,      /* 32768...Infinity */
+  };
+
+  entry_ici_template = smartlist_new();
+  exit_ici_template = smartlist_new();
+
+  int i, j, *bin_val;
+  
+  for (i = 0; i < 17; i++) {
+    add_lengths_for_interval(entry_ici_template, i, entry_distrib[i]);
+    add_lengths_for_interval(exit_ici_template, i, exit_distrib[i]);
+  }
+}
+        
+/** Send a long range dummy over circuit <b>args</b>.
+ */
+static void
+send_dummy_cell(int fd, short event, void *args)
+{
+  (void)fd;
+  (void)event;
+  circuit_t *circ = args;
+  crypt_path_t *cpath_layer = NULL;
+  
+  if (CIRCUIT_IS_ORIGIN(circ)) {
+    cpath_layer = TO_ORIGIN_CIRCUIT(circ)->cpath->prev;
+  }
+  
+  relay_send_command_from_edge(
+    0,
+    circ,
+    RELAY_COMMAND_DROP,
+    NULL,
+    0,
+    cpath_layer
+  );
+  
+  /* Remove interval from list */
+  smartlist_remove(circ->icis, circ->current_ici);
+  
+  log(LOG_NOTICE, LD_GENERAL, "Sent dummy packet");
+}
+
+/** Start a timer with a randomly selected time interval from the available
+ * inter-cell intervals from circuit <b>circ</b>. Once that timer is done it
+ * will invoke <b>send_dummy_cell</b> to send a long-range dummy.
+ */
+static void
+queue_dummy_cell(circuit_t *circ)
+{
+  struct timeval timeout;
+      
+  circ->timer = tor_evtimer_new(tor_libevent_get_base(), send_dummy_cell, circ);
+  
+  /* Randomly select an inter-cell interval from the distribution */
+  circ->current_ici = smartlist_choose(circ->icis);
+  
+  /* Convert the millisecond value into a timeval */
+  timeout.tv_sec = (*circ->current_ici / 1000);
+  timeout.tv_usec = ((*circ->current_ici % 1000) * 1000);
+  
+  if (evtimer_add(circ->timer, &timeout) < 0) {
+    log_warn(LD_BUG, "Couldn't add timer");
+  } else {
+    log_notice(LD_GENERAL, "Dummy packet timer started!");   
+  }
+}
+
+/** Function to check whether a stream was used for directory requests */
+static bool
+is_dir_stream(circuit_t *circ, streamid_t stream_id)
+{
+  bool dir_stream = false;
+  
+  if (!circ->dir_streams) {
+    circ->dir_streams = smartlist_new();  
+  }
+    
+  /* Try to find the list entry for this circuit and stream ID */
+  SMARTLIST_FOREACH_BEGIN(circ->dir_streams, streamid_t *, sid) {
+    if (*sid == stream_id) {
+      dir_stream = true;
+    }
+  } SMARTLIST_FOREACH_END(sid);
+
+  return dir_stream;
+}
+
 /** Make a relay cell out of <b>relay_command</b> and <b>payload</b>, and send
  * it onto the open circuit <b>circ</b>. <b>stream_id</b> is the ID on
  * <b>circ</b> for the stream that's sending the relay cell, or 0 if it's a
@@ -567,41 +767,33 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
     circ->n_conn->client_used = approx_time();
   }
   
-  bool dir_stream = false;
-  
-  if (relay_command == RELAY_COMMAND_DATA || relay_command == RELAY_COMMAND_BEGIN_DIR) {
-    if (!circ->dir_streams) {
-      circ->dir_streams = smartlist_new();  
-    }
-    
-    /* Try to find the list entry for this circuit and stream ID */
-    SMARTLIST_FOREACH_BEGIN(circ->dir_streams, streamid_t *, sid) {
-      if (*sid == stream_id) {
-        dir_stream = true;
-      }
-    } SMARTLIST_FOREACH_END(sid);
-  }
-  
-  if (!dir_stream) {
+  /* Main code for adaptive padding */
+  if (get_options()->AdaptivePaddingDistrib || get_options()->AdaptivePadding) {
     /* If we're sending a data cell through a circuit, we want to note the time
      * to determine the length of gaps in the stream */ 
-    if (relay_command == RELAY_COMMAND_DATA) {
-      char log_message[100], temp[32];
-      sprintf(log_message, "cell from %s", cell_direction == CELL_DIRECTION_OUT ? "entry" : "exit");
-    
+    if (relay_command == RELAY_COMMAND_DATA && !is_dir_stream(circ, stream_id)) {
+      struct timespec gap_length;
+      
+      /* TODO: Check whether circ->icis is empty and refill if needed */
+      
+      /* If it's the first DATA cell we receive ... */
       if (!circ->time_of_last_cell) {
         circ->time_of_last_cell = tor_malloc_zero(sizeof(struct timespec));
         clock_gettime(CLOCK_REALTIME, circ->time_of_last_cell);
       } else {
-        struct timespec current_time, gap_length;
-        clock_gettime(CLOCK_REALTIME, &current_time);
+        /* Stop the current timer */
+        evtimer_del(circ->timer);
+
+        struct timespec *current_time;
+        current_time = tor_malloc_zero(sizeof(struct timespec));
+        clock_gettime(CLOCK_REALTIME, current_time);
       
-        if (current_time.tv_sec < circ->time_of_last_cell->tv_sec) {
+        if (current_time->tv_sec < circ->time_of_last_cell->tv_sec) {
           gap_length.tv_sec = 0;     
           gap_length.tv_nsec = 0;
         } else {
-          gap_length.tv_sec = current_time.tv_sec -  circ->time_of_last_cell->tv_sec;
-          gap_length.tv_nsec = current_time.tv_nsec -  circ->time_of_last_cell->tv_nsec;
+          gap_length.tv_sec = current_time->tv_sec - circ->time_of_last_cell->tv_sec;
+          gap_length.tv_nsec = current_time->tv_nsec - circ->time_of_last_cell->tv_nsec;
         }
 
         while(gap_length.tv_nsec < 0) {
@@ -609,21 +801,32 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
           gap_length.tv_nsec += 1000000000;
         }
 
-        sprintf(temp, " %lu.%.3d", gap_length.tv_sec, (int)(gap_length.tv_nsec / 1000000));
-        strcat(log_message, temp);
-        circ->time_of_last_cell = &current_time;
+        circ->time_of_last_cell = current_time;
+
+        if (get_options()->AdaptivePadding) {
+          /* TODO: convert gap_length to ms then remove a length that is about the same size. */
+        }
       }
       
-      /* Log inter-cell interval, if we ought to create a distribution for adaptive padding */
-      if (get_options()->AdaptivePaddingDistrib) {
-        log(LOG_NOTICE, LD_GENERAL, log_message);
+      /* Queue a new dummy cell if adaptive padding is enabled */
+      if (get_options()->AdaptivePadding) {
+        queue_dummy_cell(circ);
       }
-    } else if (relay_command == RELAY_COMMAND_BEGIN_DIR ) { 
-      smartlist_add(circ->dir_streams, &stream_id);
+      
+      /* Log inter-cell interval, if we ought to create a inter-cell interval
+       * distribution for adaptive padding */
+      if (get_options()->AdaptivePaddingDistrib) {
+        log(LOG_NOTICE, LD_GENERAL, "cell from %s %lu.%.3d",
+            cell_direction == CELL_DIRECTION_OUT ? "entry" : "exit",
+            gap_length.tv_sec, (int)(gap_length.tv_nsec / 1000000));
+      }
+    } else if (relay_command == RELAY_COMMAND_BEGIN_DIR) { 
+      streamid_t *sid;
+      sid = tor_malloc(sizeof(streamid_t));
+      *sid = stream_id;
+      smartlist_add(circ->dir_streams, sid);
       log(LOG_DEBUG, LD_GENERAL, "Stream #%d now ignored", stream_id);
     }
-  } else {
-    log(LOG_DEBUG, LD_GENERAL, "Ignored cell from stream #%d", stream_id);
   }
 
   if (cell_direction == CELL_DIRECTION_OUT) {

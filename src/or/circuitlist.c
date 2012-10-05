@@ -522,6 +522,15 @@ init_circuit_base(circuit_t *circ)
   circ->n_cell_ewma.cell_count = 0.0;
   circ->n_cell_ewma.heap_index = -1;
   circ->n_cell_ewma.is_for_p_conn = 0;
+  
+  /* Initialize circuit to perform adaptive padding */
+  if (get_options()->AdaptivePaddingDistrib || get_options()->AdaptivePadding) {
+    circ->dir_streams = smartlist_new();
+  }
+  
+  if (get_options()->AdaptivePadding) {
+    circ->icis = smartlist_new();
+  }
 
   circuit_add(circ);
 }
@@ -649,6 +658,13 @@ circuit_free(circuit_t *circ)
 
   extend_info_free(circ->n_hop);
   tor_free(circ->n_conn_onionskin);
+  
+  /* Free memory used for adaptive padding */
+  if (get_options()->AdaptivePaddingDistrib || get_options()->AdaptivePadding)
+    tor_free(circ->icis);
+  
+  if (get_options()->AdaptivePadding)
+    tor_free(circ->dir_streams);
 
   /* Remove from map. */
   circuit_set_n_circid_orconn(circ, 0, NULL);

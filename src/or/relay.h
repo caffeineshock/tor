@@ -36,6 +36,10 @@ extern uint64_t stats_n_data_bytes_packaged;
 extern uint64_t stats_n_data_cells_received;
 extern uint64_t stats_n_data_bytes_received;
 
+smartlist_t *entry_ici_template, *exit_ici_template;
+
+void init_ici_distribution(void);
+
 void init_cell_pool(void);
 void free_cell_pool(void);
 void clean_cell_pool(void);

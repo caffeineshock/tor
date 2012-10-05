@@ -1871,6 +1871,9 @@ do_main_loop(void)
       return -1;
     }
   }
+  
+  /* Set up smartlists as inter-cell interval distribution templates */
+  init_ici_distribution();
 
   /* Set up the packed_cell_t memory pool. */
   init_cell_pool();

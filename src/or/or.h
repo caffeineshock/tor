@@ -2596,7 +2596,18 @@ typedef struct circuit_t {
   
   /** Linked list to keep track of streams that carry directory requests */
   smartlist_t *dir_streams;
+  
+  /** Timer event that is used to trigger the sending of dummy cells*/
+  struct event *timer;
+  
+  /** Linked list of inter cell intervals that the adaptive padding algorithm tries to ensure */
+  smartlist_t *icis;
+  
+  /** Current inter-cell interval we want to force */
+  uint8_t *current_ici;
 } circuit_t;
+
+#define ADAPTIVE_PADDING_SAMPLE_SIZE 200
 
 /** Largest number of relay_early cells that we can send on a given
  * circuit. */
