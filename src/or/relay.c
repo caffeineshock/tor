@@ -579,7 +579,6 @@ add_lengths_for_interval(smartlist_t *templ, int itv, int amount)
       *bin_val = pow(2, itv) + crypto_rand_int(pow(2, itv + 1));
     }
 
-    log_notice(LD_GENERAL, "Added: %d ms", *bin_val);
     smartlist_add(templ, bin_val); 
   }
 }
@@ -793,7 +792,6 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
            
         for (i = 0; i < max_icis; i++) {
            int *new_ici = smartlist_choose(ici_template);
-           log_notice(LD_GENERAL, "chose %d ms", *new_ici);
            smartlist_add(circ->icis, new_ici);
         }
       }
