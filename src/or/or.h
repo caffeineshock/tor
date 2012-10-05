@@ -2604,7 +2604,7 @@ typedef struct circuit_t {
   smartlist_t *icis;
   
   /** Current inter-cell interval we want to force */
-  uint8_t *current_ici;
+  int *current_ici;
 } circuit_t;
 
 #define ADAPTIVE_PADDING_SAMPLE_SIZE 200

@@ -571,7 +571,7 @@ add_lengths_for_interval(smartlist_t *templ, int itv, int amount)
   int j, *bin_val;
   
   for (j = 0; j < amount; j++) {
-    bin_val = tor_malloc(sizeof(streamid_t));
+    bin_val = tor_malloc(sizeof(int));
 
     if (itv == 0) {
       *bin_val = crypto_rand_int(1);
@@ -579,6 +579,7 @@ add_lengths_for_interval(smartlist_t *templ, int itv, int amount)
       *bin_val = pow(2, itv) + crypto_rand_int(pow(2, itv + 1));
     }
 
+    log_notice(LD_GENERAL, "Added: %d ms", *bin_val);
     smartlist_add(templ, bin_val); 
   }
 }
@@ -592,7 +593,7 @@ adaptive_padding_free(void) {
 void
 adaptive_padding_init(void)
 {
-  uint8_t entry_distrib[] = {
+  uint16_t entry_distrib[] = {
     62,     /* 0...1 */
     3,      /* 1...2 */
     4,      /* 2...4 */
@@ -612,7 +613,7 @@ adaptive_padding_init(void)
     11,     /* 32768...Infinity */
   };
 
-  uint8_t exit_distrib[] = {
+  uint16_t exit_distrib[] = {
     2726,   /* 0...1 */
     9,      /* 1...2 */
     22,     /* 2...4 */
@@ -635,8 +636,8 @@ adaptive_padding_init(void)
   entry_ici_template = smartlist_new();
   exit_ici_template = smartlist_new();
 
-  int i, j, *bin_val;
-  
+  int i;
+
   for (i = 0; i < 17; i++) {
     add_lengths_for_interval(entry_ici_template, i, entry_distrib[i]);
     add_lengths_for_interval(exit_ici_template, i, exit_distrib[i]);
@@ -693,7 +694,7 @@ queue_dummy_cell(circuit_t *circ)
   if (evtimer_add(circ->timer, &timeout) < 0) {
     log_warn(LD_BUG, "Couldn't add timer");
   } else {
-    log_notice(LD_GENERAL, "Dummy packet timer started!");   
+    log_notice(LD_GENERAL, "Dummy packet timer started (%dms)!", *circ->current_ici);   
   }
 }
 
@@ -702,10 +703,6 @@ static bool
 is_dir_stream(circuit_t *circ, streamid_t stream_id)
 {
   bool dir_stream = false;
-  
-  if (!circ->dir_streams) {
-    circ->dir_streams = smartlist_new();  
-  }
     
   /* Try to find the list entry for this circuit and stream ID */
   SMARTLIST_FOREACH_BEGIN(circ->dir_streams, streamid_t *, sid) {
@@ -779,9 +776,28 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
      * to determine the length of gaps in the stream */ 
     if (relay_command == RELAY_COMMAND_DATA && !is_dir_stream(circ, stream_id)) {
       struct timespec gap_length;
-      
-      /* TODO: Check whether circ->icis is empty and refill if needed */
-      
+
+      /* Refill circ->icis if needed */
+      if (get_options()->AdaptivePadding && smartlist_len(circ->icis) == 0) {
+        int i, max_icis;
+        smartlist_t *ici_template;
+           
+        if (cell_direction == CELL_DIRECTION_OUT) {
+          ici_template = entry_ici_template;
+        } else {
+          ici_template = exit_ici_template;
+        }
+        
+        max_icis = ADAPTIVE_PADDING_SAMPLE_SIZE > smartlist_len(ici_template) ?
+          smartlist_len(ici_template) : ADAPTIVE_PADDING_SAMPLE_SIZE;
+           
+        for (i = 0; i < max_icis; i++) {
+           int *new_ici = smartlist_choose(ici_template);
+           log_notice(LD_GENERAL, "chose %d ms", *new_ici);
+           smartlist_add(circ->icis, new_ici);
+        }
+      }
+
       /* If it's the first DATA cell we receive ... */
       if (!circ->time_of_last_cell) {
         circ->time_of_last_cell = tor_malloc_zero(sizeof(struct timespec));
@@ -813,12 +829,12 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
           /* TODO: convert gap_length to ms then remove a length that is about the same size. */
         }
       }
-      
+
       /* Queue a new dummy cell if adaptive padding is enabled */
-      if (get_options()->AdaptivePadding) {
+      if (get_options()->AdaptivePadding) { 
         queue_dummy_cell(circ);
       }
-      
+
       /* Log inter-cell interval, if we ought to create a inter-cell interval
        * distribution for adaptive padding */
       if (get_options()->AdaptivePaddingDistrib) {
