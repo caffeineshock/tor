@@ -584,7 +584,13 @@ add_lengths_for_interval(smartlist_t *templ, int itv, int amount)
 }
 
 void
-init_ici_distribution(void)
+adaptive_padding_free(void) {
+  smartlist_free(entry_ici_template);
+  smartlist_free(exit_ici_template);
+}
+
+void
+adaptive_padding_init(void)
 {
   uint8_t entry_distrib[] = {
     62,     /* 0...1 */

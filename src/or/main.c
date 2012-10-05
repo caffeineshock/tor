@@ -1873,7 +1873,7 @@ do_main_loop(void)
   }
   
   /* Set up smartlists as inter-cell interval distribution templates */
-  init_ici_distribution();
+  adaptive_padding_init();
 
   /* Set up the packed_cell_t memory pool. */
   init_cell_pool();
@@ -2458,6 +2458,10 @@ tor_free_all(int postfork)
   if (!postfork) {
     tor_tls_free_all();
   }
+  
+  /* Adaptive Padding */
+  adaptive_padding_free();
+  
   /* stuff in main.c */
 
   smartlist_free(connection_array);

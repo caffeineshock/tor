@@ -661,10 +661,10 @@ circuit_free(circuit_t *circ)
   
   /* Free memory used for adaptive padding */
   if (get_options()->AdaptivePaddingDistrib || get_options()->AdaptivePadding)
-    tor_free(circ->icis);
+    smartlist_free(circ->icis);
   
   if (get_options()->AdaptivePadding)
-    tor_free(circ->dir_streams);
+    smartlist_free(circ->dir_streams);
 
   /* Remove from map. */
   circuit_set_n_circid_orconn(circ, 0, NULL);
