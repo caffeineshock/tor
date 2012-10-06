@@ -609,8 +609,6 @@ adaptive_padding_init(void)
     0,      /* 2048...4096 */
     0,      /* 4096...8192 */
     1,      /* 8192...16384 */
-    0,      /* 16384...32768 */
-    11,     /* 32768...Infinity */
   };
 
   uint16_t exit_distrib[] = {
@@ -629,8 +627,6 @@ adaptive_padding_init(void)
     6,      /* 2048...4096 */
     0,      /* 4096...8192 */
     0,      /* 8192...16384 */
-    0,      /* 16384...32768 */
-    1,      /* 32768...Infinity */
   };
 
   entry_ici_template = smartlist_new();
@@ -638,11 +634,13 @@ adaptive_padding_init(void)
 
   int i;
 
-  for (i = 0; i < 17; i++) {
+  for (i = 0; i < sizeof(entry_distrib) / sizeof(uint16_t); i++) {
     add_lengths_for_interval(entry_ici_template, i, entry_distrib[i]);
     add_lengths_for_interval(exit_ici_template, i, exit_distrib[i]);
   }
 }
+
+static void queue_dummy_cell(circuit_t *);
         
 /** Send a long range dummy over circuit <b>args</b>.
  */
@@ -667,8 +665,11 @@ send_dummy_cell(int fd, short event, void *args)
     cpath_layer
   );
   
-  /* Remove interval from list */
-  smartlist_remove(circ->icis, circ->current_ici);
+  /* Queue the next dummy cell */
+  if (smartlist_len(circ->icis) > 0) {
+    queue_dummy_cell(circ);
+  }
+  
   log(LOG_NOTICE, LD_GENERAL, "Sent dummy packet");
 }
 
@@ -683,8 +684,10 @@ queue_dummy_cell(circuit_t *circ)
       
   circ->timer = tor_evtimer_new(tor_libevent_get_base(), send_dummy_cell, circ);
   
-  /* Randomly select an inter-cell interval from the distribution */
+  /* Randomly select an inter-cell interval from the distribution and 
+   * (temporarily) remove it from the list of icis */
   circ->current_ici = smartlist_choose(circ->icis);
+  smartlist_remove(circ->icis, circ->current_ici);
   
   /* Convert the millisecond value into a timeval */
   timeout.tv_sec = (*circ->current_ici / 1000);
@@ -801,6 +804,9 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
       } else {
         /* Stop the current timer */
         evtimer_del(circ->timer);
+        
+        /* Put the interval we wanted to ensure back into the list */
+        smartlist_add(circ->icis, circ->current_ici);
 
         struct timespec *current_time;
         current_time = tor_malloc_zero(sizeof(struct timespec));
