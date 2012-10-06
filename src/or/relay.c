@@ -13,6 +13,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <string.h>
+#include <limits.h>
 #define RELAY_PRIVATE
 #include "or.h"
 #include "buffers.h"
@@ -668,7 +669,6 @@ send_dummy_cell(int fd, short event, void *args)
   
   /* Remove interval from list */
   smartlist_remove(circ->icis, circ->current_ici);
-  
   log(LOG_NOTICE, LD_GENERAL, "Sent dummy packet");
 }
 
@@ -701,16 +701,14 @@ queue_dummy_cell(circuit_t *circ)
 static bool
 is_dir_stream(circuit_t *circ, streamid_t stream_id)
 {
-  bool dir_stream = false;
-    
   /* Try to find the list entry for this circuit and stream ID */
   SMARTLIST_FOREACH_BEGIN(circ->dir_streams, streamid_t *, sid) {
     if (*sid == stream_id) {
-      dir_stream = true;
+      return true;
     }
   } SMARTLIST_FOREACH_END(sid);
 
-  return dir_stream;
+  return false;
 }
 
 /** Make a relay cell out of <b>relay_command</b> and <b>payload</b>, and send
@@ -824,7 +822,23 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
         circ->time_of_last_cell = current_time;
 
         if (get_options()->AdaptivePadding) {
-          /* TODO: convert gap_length to ms then remove a length that is about the same size. */
+          int gap_length_ms, *fittest_itv;
+          gap_length_ms = gap_length.tv_sec*1000 + gap_length.tv_nsec/1000000;
+          fittest_itv = tor_malloc(sizeof(int));
+          *fittest_itv = INT_MAX;
+          
+          SMARTLIST_FOREACH_BEGIN(circ->icis, int *, itv) {
+            if (abs((*fittest_itv) - gap_length_ms) > abs((*itv) - gap_length_ms)) {
+              fittest_itv = itv;
+            }
+            
+            if (*itv == gap_length_ms) {
+              break;
+            }
+          } SMARTLIST_FOREACH_END(itv);
+          
+          smartlist_remove(circ->icis, fittest_itv);
+          log_notice(LD_GENERAL, "Adaptive Padding: Removed interval %dms from distribution for %dms", *fittest_itv, gap_length_ms);
         }
       }
 
@@ -845,7 +859,7 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
       sid = tor_malloc(sizeof(streamid_t));
       *sid = stream_id;
       smartlist_add(circ->dir_streams, sid);
-      log(LOG_DEBUG, LD_GENERAL, "Stream #%d now ignored", stream_id);
+      log_debug(LD_GENERAL, "Adaptive Padding: Stream #%d now ignored", stream_id);
     }
   }
 
