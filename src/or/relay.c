@@ -670,7 +670,7 @@ send_dummy_cell(int fd, short event, void *args)
     queue_dummy_cell(circ);
   }
   
-  log(LOG_NOTICE, LD_GENERAL, "Sent dummy packet");
+  log_debug(LD_GENERAL, "Adaptive Padding: Sent dummy packet");
 }
 
 /** Start a timer with a randomly selected time interval from the available
@@ -694,9 +694,9 @@ queue_dummy_cell(circuit_t *circ)
   timeout.tv_usec = ((*circ->current_ici % 1000) * 1000);
   
   if (evtimer_add(circ->timer, &timeout) < 0) {
-    log_warn(LD_BUG, "Couldn't add timer");
+    log_warn(LD_BUG, "Adaptive Padding: Couldn't add timer");
   } else {
-    log_notice(LD_GENERAL, "Dummy packet timer started (%dms)!", *circ->current_ici);   
+    log_debug(LD_GENERAL, "Adaptive Padding: Dummy packet timer started (%dms)!", *circ->current_ici);   
   }
 }
 
@@ -844,7 +844,7 @@ relay_send_command_from_edge(streamid_t stream_id, circuit_t *circ,
           } SMARTLIST_FOREACH_END(itv);
           
           smartlist_remove(circ->icis, fittest_itv);
-          log_notice(LD_GENERAL, "Adaptive Padding: Removed interval %dms from distribution for %dms", *fittest_itv, gap_length_ms);
+          log_debug(LD_GENERAL, "Adaptive Padding: Removed interval %dms from distribution for %dms", *fittest_itv, gap_length_ms);
         }
       }
 
