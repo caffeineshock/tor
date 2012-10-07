@@ -670,7 +670,7 @@ send_dummy_cell(int fd, short event, void *args)
     queue_dummy_cell(circ);
   }
   
-  log_debug(LD_GENERAL, "Adaptive Padding: Sent dummy packet");
+  log_notice(LD_GENERAL, "Adaptive Padding: Sent dummy packet");
 }
 
 /** Start a timer with a randomly selected time interval from the available
